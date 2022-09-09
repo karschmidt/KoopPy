@@ -4,10 +4,13 @@ A FeatureServer/MapServer implementation based on FastAPI, Geopandas and ArcGIS 
 
 Currently serves ```.geojson``` and ```.shp``` files inside ```./data``` and should support usage in MapViewer Classic and the new MapViewer.
 
+
+**Momentarily does not support dynamic MapServices i.e. no adjustig the colors/renderer**
+
 The API serves the data using the following routes:
-1. http\://localhost:8000/DATANAME/FeatureServer
-2. http\://localhost:8000/DATANAME/FeatureServer/0
-3. http\://localhost:8000/DATANAME/MapServer
+1. http\://localhost:8000/```DATANAME```/FeatureServer
+2. http\://localhost:8000/```DATANAME```/FeatureServer/0
+3. http\://localhost:8000/```DATANAME```/MapServer
 
 ## Example
 For the example file inside the data folder ```ne_10m_admin_0_countries.shp``` the routes would be:
