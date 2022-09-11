@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 
 import geopandas as gpd
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, box
 import os
 import json
 from arcgis.features import FeatureSet,GeoAccessor, GeoSeriesAccessor
@@ -656,7 +656,7 @@ def root(serviceName:str, f: str = "json", callback: str=None):
 ### lengths: [5, 5]
 
 @app.get("/{serviceName}/FeatureServer/0/query")
-def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="", maxAllowableOffset: float=None, returnCountOnly: str=None, resultOffset : int=None, resultRecordCount: int=None, outFields: str=None, callback: str=None, quantizationParameters: str=None, returnGeometry: str=None,groupByFieldsForStatistics: str=None,outStatistics: str=None):
+def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1", maxAllowableOffset: float=None, returnCountOnly: str=None, resultOffset : int=None, resultRecordCount: int=None, outFields: str=None, callback: str=None, quantizationParameters: str=None, returnGeometry: str=None,groupByFieldsForStatistics: str=None,outStatistics: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
@@ -716,7 +716,7 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="", m
           return esriJSON
 
         ###Handle format json and whole statistics shenanigangs
-        elif f== "json" and returnGeometry == "false" and outStatistics !=None:
+        elif f== "json" and outStatistics !=None:
           statRequest = json.loads(outStatistics)
           if groupByFieldsForStatistics != None:
             fields = []
@@ -738,7 +738,6 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="", m
             features =[]
             groupedService = esriServicesDict[serviceName].groupby([statRequest[0]["onStatisticField"]])
             for row in groupedService.count().itertuples():
-              ###Überarbeiten für onStatisticField Grouped count quasi wo hier noch 1 steht
               tempFeatures = {
                 "attributes": {
                   statRequest[0]["onStatisticField"]: row[0],
@@ -799,12 +798,15 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="", m
         elif f == "json":
             geometryParsed = json.loads(geometry)
             try:
-              clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
+              #clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
+              clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmax"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
+              #clippingExtent = gpd.Geoseries(box(geometryParsed["xmin"],geometryParsed["ymin"],geometryParsed["xmax"],geometryParsed["ymax"]),crs="EPSG:3857")
               envgdf = gpd.GeoDataFrame(geometry=clippingExtent)
               esrienv = GeoAccessor.from_geodataframe(envgdf,column_name="geometry")
-              ##GeoAccessor.select for spatial query
+              ##Create Spatial Index and use said index for the intersection of the geometry parameter. Why? Because all other ArcGIS API for Python methods (spatial.select, overlay, relationship) don't return the correct number.
               ##GeoAccessorSeries.generalize for generalization of Geometry using the maxAllowableOffset Parameter
-              esriGDFClipped = esriServicesDict[serviceName].spatial.select(esrienv)
+              si = esriServicesDict[serviceName].spatial.sindex()
+              esriGDFClipped = esriServicesDict[serviceName].iloc[si.intersect([geometryParsed["xmin"], geometryParsed["ymin"], geometryParsed["xmax"], geometryParsed["ymax"]])]
               ###if statement to catch point layers which will not be generalized
               if maxAllowableOffset == None:
                 pass
@@ -860,23 +862,7 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="", m
                 "exceededTransferLimit": False
               }
               except:
-                interDF = FeatureSet.from_dataframe(df=esriGDFClipped)
-                esriJSON = {
-                "objectIdFieldName" : "OBJECTID",
-                "uniqueIdField" : 
-                {
-                  "name" : "OBJECTID", 
-                  "isSystemMaintained" : True
-                },
-                "geometryType":"esriGeometry" + multiSanitized,
-                "globalIdFieldName" : "",
-                "hasZ": False,
-                "hasM": False,
-                "fields" : interDF.fields,
-                "spatialReference" : {"wkid" : 102100, "latestWkid" : 3857},
-                "features" : interDF.to_dict()["features"],
-                "exceededTransferLimit": False
-              }
+                {"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","geometryProperties":{"shapeAreaFieldName":"Shape__Area","shapeLengthFieldName":"Shape__Length","units":"esriMeters"},"fields":interDF.fields,"features":[]}
             except:
               interDF = FeatureSet.from_dataframe(df=esriServicesDict[serviceName])
               if callback is None:
