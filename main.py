@@ -53,6 +53,7 @@ for file in os.listdir(directory):
         geos= gpd.read_file(os.path.join(directory, filename))
         geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
         esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
+        esriGDF.insert(0, "OBJECTID",esriGDF.index)
         services.append(geosReprojected)
         filenames.append(os.path.splitext(filename)[0])
         esriServices.append(esriGDF)
@@ -136,10 +137,10 @@ polygonRenderer = {
 @app.get("/rest/info")
 def root (f: str="json"):
     infoJSON = {
-          "currentVersion" : 10.8, 
-          "fullVersion" : "10.8", 
-          "owningSystemUrl" : "https://www.arcgis.com", 
-          "owningTenant" : "KarstenSchmidt", 
+          "currentVersion" : 10.5, 
+          "fullVersion" : "10.5", 
+          "owningSystemUrl" : "https://github.com/karschmidt/KoopPy", 
+          "owningTenant" : "Karsten Schmidt", 
           "authInfo" : 
           {
             "isTokenBasedSecurity" : False
@@ -214,7 +215,7 @@ def root(serviceName:str):
 ###initial service info page for MapServer
 
 @app.get("/{serviceName}/MapServer")
-def root(serviceName:str):
+def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
@@ -223,7 +224,7 @@ def root(serviceName:str):
         else:
             multiSanitized = servicesDict[serviceName].geom_type[0]
         service = {
-          "currentVersion": 10.8,
+          "currentVersion": 10.5,
           "serviceDescription": "MapServer using KoopPy by Karsten Schmidt",
           "mapName": serviceName,
           "description": "MapServer using KoopPy by Karsten Schmidt",
@@ -267,7 +268,7 @@ def root(serviceName:str):
             "latestWkid": 3857
             }
         }, 
-          "units": "esriDecimalDegrees",
+          "units": "esriMeters",
           "supportedImageFormatTypes": "PNG32",
           "capabilities": "Map,Query,Data",
           "maxRecordCount": 1000,
@@ -282,7 +283,10 @@ def root(serviceName:str):
           "supportedExtensions": "<FeatureServer,KmlServer,MobileServer,WCSServer,WFSServer,WMSServer,NAServer,SchematicsServer>",
           "resampling": False
         }
-        return service
+        if callback is None:
+          return JSONResponse(content=service, media_type="application/json; charset=utf-8")
+        else:
+          return HTMLResponse(content=callback+"("+json.dumps(service)+");", media_type="application/javascript; charset=UTF-8")
 
 ### MapServer export image route - supports bbox, size and dpi. Currently outputs blue colormap but can be adjusted as a dynamicLayer.
 ### No statistics yet. No jpg support - just plain 32bit png
@@ -762,6 +766,8 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
                 function = "mean"
               if function == "stddev":
                 function = "std"
+              if function == "percentile_cont":
+                function = "quantile"
               serviceSanitized = esriServicesDict[serviceName].query(querySan)
               statCalc = {
                 statRequest[i]["statisticType"]+"_value": float(getattr(serviceSanitized[statRequest[i]["onStatisticField"]], function)())
@@ -796,83 +802,103 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
 
         #### whole format json query handling
         elif f == "json":
-            geometryParsed = json.loads(geometry)
-            try:
-              #clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
-              clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmax"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
-              #clippingExtent = gpd.Geoseries(box(geometryParsed["xmin"],geometryParsed["ymin"],geometryParsed["xmax"],geometryParsed["ymax"]),crs="EPSG:3857")
-              envgdf = gpd.GeoDataFrame(geometry=clippingExtent)
-              esrienv = GeoAccessor.from_geodataframe(envgdf,column_name="geometry")
-              ##Create Spatial Index and use said index for the intersection of the geometry parameter. Why? Because all other ArcGIS API for Python methods (spatial.select, overlay, relationship) don't return the correct number.
-              ##GeoAccessorSeries.generalize for generalization of Geometry using the maxAllowableOffset Parameter
-              si = esriServicesDict[serviceName].spatial.sindex()
-              esriGDFClipped = esriServicesDict[serviceName].iloc[si.intersect([geometryParsed["xmin"], geometryParsed["ymin"], geometryParsed["xmax"], geometryParsed["ymax"]])]
-              ###if statement to catch point layers which will not be generalized
-              if maxAllowableOffset == None:
-                pass
-              else:
-                esriGDFClipped.geometry = esriGDFClipped.geometry.geom.generalize(maxAllowableOffset)
-                ### Why does geom.generalize mess with the crs? nobody except ESRI knows
-                esriGDFClipped.spatial.sr = {"wkid":3857}
-
-              esriGDFClipped.insert(0, "OBJECTID",esriGDFClipped.index)
-
-              if outFields == "*":
-                queriedFields = None
-              if outFields == "":
-                queriedFields = ["OBJECTID","geometry"]
-              if outFields == "OBJECTID":
-                queriedFields = ["OBJECTID","geometry"]
-                
-              if "OBJECTID" in outFields:
-                outFieldsStr = outFields.replace(" ","")
-                sanitizedOutFields = outFieldsStr.split(",")
-                queriedFields = ["geometry"]
-                for item in sanitizedOutFields:
-                    queriedFields.append(item)
-              elif len(outFields) >= 1:
-                outFieldsStr = outFields.replace(" ","")
-                sanitizedOutFields = outFieldsStr.split(",")
-                queriedFields = ["OBJECTID","geometry"]
-                for item in sanitizedOutFields:
-                    queriedFields.append(item)
-              else:
-                pass
-
-              try:
-                esriGDFClipped = esriGDFClipped[queriedFields]
-              except:
-                pass
-              try:
-                interDF = FeatureSet.from_dataframe(df=esriGDFClipped.query(where))
-                esriJSON = {
-                "objectIdFieldName" : "OBJECTID",
-                "uniqueIdField" : 
-                {
-                  "name" : "OBJECTID", 
-                  "isSystemMaintained" : True
-                },
-                "geometryType":"esriGeometry" + multiSanitized,
-                "globalIdFieldName" : "",
-                "hasZ": False,
-                "hasM": False,
-                "fields" : interDF.fields,
-                "spatialReference" : {"wkid" : 102100, "latestWkid" : 3857},
-                "features" : interDF.to_dict()["features"],
-                "exceededTransferLimit": False
-              }
-              except:
-                {"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","geometryProperties":{"shapeAreaFieldName":"Shape__Area","shapeLengthFieldName":"Shape__Length","units":"esriMeters"},"fields":interDF.fields,"features":[]}
-            except:
+            if geometry == "":
               interDF = FeatureSet.from_dataframe(df=esriServicesDict[serviceName])
-              if callback is None:
-                return {"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","geometryProperties":{"shapeAreaFieldName":"Shape__Area","shapeLengthFieldName":"Shape__Length","units":"esriMeters"},"fields":interDF.fields,"features":[]}
-              else:
-                return HTMLResponse(content=callback+"("+json.dumps({"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","fields":interDF.fields,"features":[]})+");", media_type="application/javascript; charset=utf-8")
-            if callback is None:
-                return JSONResponse(content=esriJSON,media_type="application/json; charset=utf-8")
+              esriJSON = {
+              "objectIdFieldName" : "OBJECTID",
+              "uniqueIdField" : 
+              {
+                "name" : "OBJECTID", 
+                "isSystemMaintained" : True
+              },
+              "geometryType":"esriGeometry" + multiSanitized,
+              "globalIdFieldName" : "",
+              "hasZ": False,
+              "hasM": False,
+              "fields" : interDF.fields,
+              "spatialReference" : {"wkid" : 102100, "latestWkid" : 3857},
+              "features" : interDF.to_dict()["features"],
+              "exceededTransferLimit": False
+            }
+              return esriJSON
             else:
-                return HTMLResponse(content=callback+"("+json.dumps(esriJSON)+")", media_type="application/javascript; charset=utf-8")
+              geometryParsed = json.loads(geometry)
+              try:
+                #clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
+                clippingExtent = gpd.GeoSeries(Polygon([[geometryParsed["xmax"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymax"]],[geometryParsed["xmin"],geometryParsed["ymin"]],[geometryParsed["xmax"],geometryParsed["ymin"]]]),crs="EPSG:3857")
+                #clippingExtent = gpd.Geoseries(box(geometryParsed["xmin"],geometryParsed["ymin"],geometryParsed["xmax"],geometryParsed["ymax"]),crs="EPSG:3857")
+                envgdf = gpd.GeoDataFrame(geometry=clippingExtent)
+                esrienv = GeoAccessor.from_geodataframe(envgdf,column_name="geometry")
+                ##Create Spatial Index and use said index for the intersection of the geometry parameter. Why? Because all other ArcGIS API for Python methods (spatial.select, overlay, relationship) don't return the correct number.
+                ##GeoAccessorSeries.generalize for generalization of Geometry using the maxAllowableOffset Parameter
+                si = esriServicesDict[serviceName].spatial.sindex()
+                esriGDFClipped = esriServicesDict[serviceName].iloc[si.intersect([geometryParsed["xmin"], geometryParsed["ymin"], geometryParsed["xmax"], geometryParsed["ymax"]])]
+                ###if statement to catch point layers which will not be generalized
+                if maxAllowableOffset == None:
+                  pass
+                else:
+                  esriGDFClipped.geometry = esriGDFClipped.geometry.geom.generalize(maxAllowableOffset)
+                  ### Why does geom.generalize mess with the crs? nobody except ESRI knows
+                  esriGDFClipped.spatial.sr = {"wkid":3857}
+
+                #esriGDFClipped.insert(0, "OBJECTID",esriGDFClipped.index)
+
+                if outFields == "*":
+                  queriedFields = None
+                if outFields == "":
+                  queriedFields = ["OBJECTID","geometry"]
+                if outFields == "OBJECTID":
+                  queriedFields = ["OBJECTID","geometry"]
+                  
+                if "OBJECTID" in outFields:
+                  outFieldsStr = outFields.replace(" ","")
+                  sanitizedOutFields = outFieldsStr.split(",")
+                  queriedFields = ["geometry"]
+                  for item in sanitizedOutFields:
+                      queriedFields.append(item)
+                elif len(outFields) >= 1:
+                  outFieldsStr = outFields.replace(" ","")
+                  sanitizedOutFields = outFieldsStr.split(",")
+                  queriedFields = ["OBJECTID","geometry"]
+                  for item in sanitizedOutFields:
+                      queriedFields.append(item)
+                else:
+                  pass
+
+                try:
+                  esriGDFClipped = esriGDFClipped[queriedFields]
+                except:
+                  pass
+                try:
+                  interDF = FeatureSet.from_dataframe(df=esriGDFClipped.query(where))
+                  esriJSON = {
+                  "objectIdFieldName" : "OBJECTID",
+                  "uniqueIdField" : 
+                  {
+                    "name" : "OBJECTID", 
+                    "isSystemMaintained" : True
+                  },
+                  "geometryType":"esriGeometry" + multiSanitized,
+                  "globalIdFieldName" : "",
+                  "hasZ": False,
+                  "hasM": False,
+                  "fields" : interDF.fields,
+                  "spatialReference" : {"wkid" : 102100, "latestWkid" : 3857},
+                  "features" : interDF.to_dict()["features"],
+                  "exceededTransferLimit": False
+                }
+                except:
+                  {"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","geometryProperties":{"shapeAreaFieldName":"Shape__Area","shapeLengthFieldName":"Shape__Length","units":"esriMeters"},"fields":interDF.fields,"features":[]}
+              except:
+                interDF = FeatureSet.from_dataframe(df=esriServicesDict[serviceName])
+                if callback is None:
+                  return {"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","geometryProperties":{"shapeAreaFieldName":"Shape__Area","shapeLengthFieldName":"Shape__Length","units":"esriMeters"},"fields":interDF.fields,"features":[]}
+                else:
+                  return HTMLResponse(content=callback+"("+json.dumps({"objectIdFieldName":"OBJECTID","uniqueIdField":{"name":"OBJECTID","isSystemMaintained":True},"globalIdFieldName":"","fields":interDF.fields,"features":[]})+");", media_type="application/javascript; charset=utf-8")
+              if callback is None:
+                  return JSONResponse(content=esriJSON,media_type="application/json; charset=utf-8")
+              else:
+                  return HTMLResponse(content=callback+"("+json.dumps(esriJSON)+")", media_type="application/javascript; charset=utf-8")
         
         ### handle pbf format - not working!
         elif f == "pbf":
