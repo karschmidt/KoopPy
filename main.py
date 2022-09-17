@@ -238,10 +238,13 @@ def root(serviceName:str, callback: str=None):
             "subLayerIds": None,
             "minScale": 0,
             "maxScale": 0,
-            "geometryType": "esriGeometry" + multiSanitized
+            "type": "Feature Layer",
+            "geometryType": "esriGeometry" + multiSanitized,
+            "supportsDynamicLegends": True
 
         }
           ],
+          "supportsDatumTransformation": True,
           "tables": [],
           "spatialReference": {"wkid": 102100,
             "latestWkid": 3857},
@@ -280,13 +283,239 @@ def root(serviceName:str, callback: str=None):
           "supportedQueryFormats": "JSON",
           "exportTilesAllowed": False,
           "maxExportTilesCount": 100000,
-          "supportedExtensions": "<FeatureServer,KmlServer,MobileServer,WCSServer,WFSServer,WMSServer,NAServer,SchematicsServer>",
+          "supportedExtensions": "FeatureServer",
           "resampling": False
         }
         if callback is None:
           return JSONResponse(content=service, media_type="application/json; charset=utf-8")
         else:
           return HTMLResponse(content=callback+"("+json.dumps(service)+");", media_type="application/javascript; charset=UTF-8")
+### MapServer /0/ route
+
+@app.get("/{serviceName}/MapServer/0")
+def root(serviceName:str, f: str = "json", callback: str=None):
+    if serviceName not in servicesDict.keys():
+        raise HTTPException(status_code=404, detail="Item not found")
+    else:
+        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = "Polygon"
+        elif servicesDict[serviceName].geom_type[0] == "Polygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Line":
+            rendererInfo = lineRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Point":
+            rendererInfo = pointRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+
+        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
+        interDF = FeatureSet.from_dataframe(df=esriGDF)
+        case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
+
+        for i in range(len(interDF.fields)):
+            interDF.fields[i].update(case)
+
+        layerSettings = {
+            "currentVersion":10.5,
+            "id":0,
+            "name":serviceName,
+            "type":"Feature Layer",
+            "description":"Data served by KoopPy",
+            "geometryType":"esriGeometry" + multiSanitized,
+            "copyrightText":"",
+            "parentLayer":None,
+            "subLayers":None,
+            "minScale":0,
+            "maxScale":0,
+            "fields": interDF.fields,
+            "drawingInfo":{
+                    "renderer": rendererInfo
+            },
+            "defaultVisibility":True,
+            "extent":{
+                "xmin": servicesDict[serviceName].geometry.total_bounds[0],
+                "ymin": servicesDict[serviceName].geometry.total_bounds[1],
+                "xmax": servicesDict[serviceName].geometry.total_bounds[2],
+                "ymax": servicesDict[serviceName].geometry.total_bounds[3],
+                "spatialReference":{
+                    "wkid":102100,
+                    "latestWkid":3857
+                }
+            },
+            "hasAttachments":False,
+            "displayField":"OBJECTID",
+            "typeIdField":None,
+            "relationships":[],
+            "canModifyLayer":False,
+            "htmlPopupType": "esriServerHTMLPopupTypeNone",
+            "canScaleSymbols":False,
+            "hasLabels":False,
+            "capabilities":"Query",
+            "maxRecordCount":1000,
+            "supportsStatistics":True,
+            "supportsAdvancedQueries":False,
+            "supportedQueryFormats":"JSON",
+            "supportsOutFieldsSqlExpression": True,
+            "ownershipBasedAccessControlForFeatures":{
+                "allowOthersToQuery":True
+            },
+            "useStandardizedQueries":True,
+            "advancedQueryCapabilities":{
+                "useStandardizedQueries":True,
+                "supportsQueryWithResultType": True,
+                "supportsStatistics":True,
+                "supportsOrderBy":True,
+                "supportsDistinct":True,
+                "supportsPagination":True,
+                "supportsTrueCurve":False,
+                "supportsReturningQueryExtent":True,
+                "supportsQueryWithDistance":False
+            },
+            "dateFieldsTimeReference":None,
+            "isDataVersioned":False,
+            "supportsRollbackOnFailureParameter":True,
+            "hasM":False,
+            "hasZ":False,
+            "allowGeometryUpdates":False,
+            "objectIdField":"OBJECTID",
+            "uniqueIdField" : 
+                {
+                  "name" : "OBJECTID", 
+                  "isSystemMaintained" : True
+                },
+            "globalIdField":"",
+            "types":[
+                
+            ],
+            "templates":[
+                {
+                    "name": serviceName,
+                    "description": "",
+                    "drawingTool" : "esriFeatureEditTool" + multiSanitized,
+                    "prototype": {"attributes":{}}      
+                }
+            ],
+            "hasStaticData":True
+            }
+        if callback is None:
+            return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+        else:
+            return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+
+### MapServer layers route
+
+@app.get("/{serviceName}/MapServer/layers")
+def root(serviceName:str, callback: str=None):
+    if serviceName not in servicesDict.keys():
+        raise HTTPException(status_code=404, detail="Item not found")
+    else:
+        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = "Polygon"
+        elif servicesDict[serviceName].geom_type[0] == "Polygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Line":
+            rendererInfo = lineRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Point":
+            rendererInfo = pointRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+
+        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
+        interDF = FeatureSet.from_dataframe(df=esriGDF)
+
+        layerSettings = {
+            "layers":[{
+              "currentVersion":10.5,
+              "id":0,
+              "name":serviceName,
+              "type":"Feature Layer",
+              "description":"Data served by KoopPy",
+              "geometryType":"esriGeometry" + multiSanitized,
+              "copyrightText":" ",
+              "parentLayer":None,
+              "subLayers":[],
+              "minScale":0,
+              "maxScale":0,
+              "sourceSpatialReference":{
+                      "wkid":102100,
+                      "latestWkid":3857
+                  },
+              "drawingInfo":{
+                      "renderer": rendererInfo
+              },
+              "defaultVisibility":True,
+              "extent":{
+                  "xmin": servicesDict[serviceName].geometry.total_bounds[0],
+                  "ymin": servicesDict[serviceName].geometry.total_bounds[1],
+                  "xmax": servicesDict[serviceName].geometry.total_bounds[2],
+                  "ymax": servicesDict[serviceName].geometry.total_bounds[3],
+                  "spatialReference":{
+                      "wkid":102100,
+                      "latestWkid":3857
+                  }
+              },
+              "hasAttachments":False,
+              "htmlPopupType":"esriServerHTMLPopupTypeAsHTMLText",
+              "displayField":"OBJECTID",
+              "typeIdField":None,
+              "fields":[],
+              "relationships":[],
+              "canModifyLayer":True,
+              "canScaleSymbols":False,
+              "hasLabels":False,
+              "capabilities":"Query",
+              "maxRecordCount":1000,
+              "supportsStatistics":True,
+              "supportsAdvancedQueries":False,
+              "supportedQueryFormats":"JSON",
+              "supportsOutFieldsSqlExpression": True,
+              "ownershipBasedAccessControlForFeatures":{
+                  "allowOthersToQuery":True
+              },
+              "useStandardizedQueries":True,
+              "advancedQueryCapabilities":{
+                  "useStandardizedQueries":True,
+                  "supportsStatistics":True,
+                  "supportsOrderBy":True,
+                  "supportsDistinct":True,
+                  "supportsPagination":True,
+                  "supportsTrueCurve":False,
+                  "supportsReturningQueryExtent":True,
+                  "supportsQueryWithDistance":True
+              },
+              "dateFieldsTimeReference":None,
+              "isDataVersioned":False,
+              "supportsRollbackOnFailureParameter":True,
+              "hasM":False,
+              "hasZ":False,
+              "allowGeometryUpdates":False,
+              "objectIdField":"OBJECTID",
+              "uniqueIdField" : 
+                  {
+                    "name" : "OBJECTID", 
+                    "isSystemMaintained" : True
+                  },
+              "globalIdField":"",
+              "types":[
+                  
+              ],
+              "templates":[
+                  
+              ],
+              "fields":interDF.fields,
+              "hasStaticData":True
+              }
+              ]
+        }
+        if callback is None:
+          return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+        else:
+          return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+
 
 ### MapServer export image route - supports bbox, size and dpi. Currently outputs blue colormap but can be adjusted as a dynamicLayer.
 ### No statistics yet. No jpg support - just plain 32bit png
@@ -343,16 +572,19 @@ def root(serviceName:str, callback: str=None):
 
       layerSettings = {
           "currentVersion":10.5,
-          "id":0,
-          "name":serviceName,
+          "name":serviceName + "_0",
           "type":"Feature Layer",
-          "description":"Data served by FastAPI",
+          "description":"Data served by KoopPy",
           "geometryType":"esriGeometry" + multiSanitized,
           "copyrightText":"",
           "parentLayer":None,
           "subLayers":None,
           "minScale":0,
           "maxScale":0,
+          "sourceSpatialReference":{
+                      "wkid":102100,
+                      "latestWkid":3857
+                  },
           "fields": interDF.fields,
           "drawingInfo":{
                   "renderer": rendererInfo
@@ -369,7 +601,7 @@ def root(serviceName:str, callback: str=None):
               }
           },
           "hasAttachments":False,
-          "displayField":interDF.fields[1]["name"],
+          "displayField":"OBJECTID",
           "typeIdField":None,
           "relationships":[],
           "canModifyLayer":False,
@@ -428,6 +660,9 @@ def root(serviceName:str, callback: str=None):
       else:
           return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
 
+
+
+
 ### FeatureServer layers route - not sure if actually needed
 
 @app.get("/{serviceName}/FeatureServer/layers")
@@ -456,7 +691,7 @@ def root(serviceName:str):
             "id":0,
             "name":serviceName,
             "type":"Feature Layer",
-            "description":"Data served by FastAPI",
+            "description":"Data served by KoopPy",
             "geometryType":"esriGeometry" + multiSanitized,
             "copyrightText":" ",
             "parentLayer":None,
@@ -565,7 +800,7 @@ def root(serviceName:str, f: str = "json", callback: str=None):
             "id":0,
             "name":serviceName,
             "type":"Feature Layer",
-            "description":"Data served by FastAPI",
+            "description":"Data served by KoopPy",
             "geometryType":"esriGeometry" + multiSanitized,
             "copyrightText":"",
             "parentLayer":None,
