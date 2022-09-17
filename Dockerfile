@@ -12,6 +12,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get -yqq install libkrb5-dev
 COPY requirements.txt requirements.txt
 RUN pip install -r requirements.txt
-EXPOSE 8000
+EXPOSE 80
 COPY . .
 CMD ["uvicorn", "main:app","--host", "0.0.0.0", "--port", "80"] 
