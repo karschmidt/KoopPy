@@ -1,27 +1,38 @@
+### FastAPI stuff
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 ##from brotli_asgi import BrotliMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
-
+### Geo loading and conversion libs
 import geopandas as gpd
 from shapely.geometry import Polygon, box
 import os
 import json
 from arcgis.features import FeatureSet,GeoAccessor, GeoSeriesAccessor
+from arcgis.mapping.renderer import generate_renderer
+from arcgis.mapping.symbol import create_symbol, display_colormaps, show_styles
 import pandas as pd
 from math import isnan
 import warnings
+import matplotlib
 
+###JSON Templates
+from rendererTemplates import pointRenderer, lineRenderer, polygonRenderer
+from jsonTemplates import serviceFS, serviceMS, layerSettings
+
+### MapServer image output
 from io import BytesIO
 from starlette.responses import StreamingResponse
 import matplotlib as mpl
 
-warnings.filterwarnings('ignore')
 
+### PBF libs
 import FeatureCollection_pb2
 import google.protobuf
+
+warnings.filterwarnings('ignore')
 
 app = FastAPI()
 
@@ -64,74 +75,7 @@ for file in os.listdir(directory):
 servicesDict = {filenames[i]: services[i] for i in range(len(filenames))}
 esriServicesDict = {filenames[i]: esriServices[i] for i in range(len(filenames))}
 
-###base renderer settings
-pointRenderer = {
-      "type": "simple",
-      "symbol": {
-        "color": [
-          45,
-          172,
-          128,
-          161
-        ],
-        "outline": {
-          "color": [
-            190,
-            190,
-            190,
-            105
-          ],
-          "width": 0.5,
-          "type": "esriSLS",
-          "style": "esriSLSSolid"
-        },
-        "size": 7.5,
-        "type": "esriSMS",
-        "style": "esriSMSCircle"
-      }
-    }
-lineRenderer = {
-      "type": "simple",
-      "symbol": {
-        "color": [
-          247,
-          150,
-          70,
-          204
-        ],
-        "width": 6.999999999999999,
-        "type": "esriSLS",
-        "style": "esriSLSSolid"
-      }
-}
 
-polygonRenderer = {
-      "type": "simple",
-      "symbol": {
-        "type": "esriSFS",
-        "style": "esriSFSSolid",
-        "color": [
-          75,
-          172,
-          198,
-          161
-        ],
-        "outline": {
-          "color": [
-            150,
-            150,
-            150,
-            155
-          ],
-          "width": 0.5,
-          "type": "esriSLS",
-          "style": "esriSLSSolid"
-        }
-      },
-      "scaleSymbols": True,
-      "transparency": 0,
-      "labelingInfo": None
-}
 ###/rest/info route -  Don't really know if needed
 
 @app.get("/rest/info")
@@ -159,58 +103,20 @@ def root(serviceName:str):
             multiSanitized = "Polygon"
         else:
             multiSanitized = servicesDict[serviceName].geom_type[0]
-        service = {
-        "serviceDescription": "FastAPI ESRI FeatureServer implementation by Karsten Schmidt",
-        "hasVersionedData": False,
-        "supportsDisconnectedEditing": False,
-        "supportsRelationshipsResource": False,
-        "supportedQueryFormats": "JSON,geoJSON",
-        "maxRecordCount": 2000,
-        "hasStaticData": False,
-        "capabilities": "Query",
-        "description": "FastAPI ESRI FeatureServer implementation by Karsten Schmidt",
-        "copyrightText": "Copyright information varies from provider to provider, for more information please contact the source of this data",
-        "spatialReference": {
-            "wkid": 102100,
-            "latestWkid": 3857
-        },
-        "initialExtent": {
-            "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-            "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-            "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-            "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-            "spatialReference": {
-            "wkid": 102100,
-            "latestWkid": 3857
-            }
-        },
-        "fullExtent": {
-            "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-            "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-            "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-            "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-            "spatialReference": {
-            "wkid": 102100,
-            "latestWkid": 3857
-            }
-        },
-        "allowGeometryUpdates": False,
-        "units": "esriDecimalDegrees",
-        "syncEnabled": False,
-        "layers": [{
-            "name": serviceName,
-            "id": 0,
-            "parentLayerId": -1,
-            "defaultVisibility": True,
-            "subLayerIds": None,
-            "minScale": 0,
-            "maxScale": 0,
-            "geometryType": "esriGeometry" + multiSanitized
+        serviceFS["initialExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        serviceFS["initialExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        serviceFS["initialExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        serviceFS["initialExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
 
-        }],
-        "tables": []
-        }
-        return service
+        serviceFS["fullExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        serviceFS["fullExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        serviceFS["fullExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        serviceFS["fullExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
+
+        serviceFS["layers"][0]["name"] = serviceName
+        serviceFS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
+        
+        return serviceFS
 
 ###initial service info page for MapServer
 
@@ -223,73 +129,24 @@ def root(serviceName:str, callback: str=None):
             multiSanitized = "Polygon"
         else:
             multiSanitized = servicesDict[serviceName].geom_type[0]
-        service = {
-          "currentVersion": 10.5,
-          "serviceDescription": "MapServer using KoopPy by Karsten Schmidt",
-          "mapName": serviceName,
-          "description": "MapServer using KoopPy by Karsten Schmidt",
-          "copyrightText": "",
-          "supportsDynamicLayers": True,
-          "layers": [{
-            "name": serviceName,
-            "id": 0,
-            "parentLayerId": -1,
-            "defaultVisibility": True,
-            "subLayerIds": None,
-            "minScale": 0,
-            "maxScale": 0,
-            "type": "Feature Layer",
-            "geometryType": "esriGeometry" + multiSanitized,
-            "supportsDynamicLegends": True
 
-        }
-          ],
-          "supportsDatumTransformation": True,
-          "tables": [],
-          "spatialReference": {"wkid": 102100,
-            "latestWkid": 3857},
-          "singleFusedMapCache": False,
-          "tileInfo": {
-          },
-         "initialExtent": {
-            "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-            "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-            "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-            "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-            "spatialReference": {
-            "wkid": 102100,
-            "latestWkid": 3857
-            }
-        },
-        "fullExtent": {
-            "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-            "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-            "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-            "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-            "spatialReference": {
-            "wkid": 102100,
-            "latestWkid": 3857
-            }
-        }, 
-          "units": "esriMeters",
-          "supportedImageFormatTypes": "PNG32",
-          "capabilities": "Map,Query,Data",
-          "maxRecordCount": 1000,
-          "maxImageHeight": 2048,
-          "maxImageWidth": 2048,
-          "minScale": 0,
-          "maxScale": 0,
-          "tileServers": [],
-          "supportedQueryFormats": "JSON",
-          "exportTilesAllowed": False,
-          "maxExportTilesCount": 100000,
-          "supportedExtensions": "FeatureServer",
-          "resampling": False
-        }
+        serviceMS["mapName"] = serviceName
+        serviceMS["layers"][0]["name"] = serviceName
+        serviceMS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
+        serviceMS["initialExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        serviceMS["initialExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        serviceMS["initialExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        serviceMS["initialExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
+
+        serviceMS["fullExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        serviceMS["fullExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        serviceMS["fullExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        serviceMS["fullExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
+
         if callback is None:
-          return JSONResponse(content=service, media_type="application/json; charset=utf-8")
+          return JSONResponse(content=serviceMS, media_type="application/json; charset=utf-8")
         else:
-          return HTMLResponse(content=callback+"("+json.dumps(service)+");", media_type="application/javascript; charset=UTF-8")
+          return HTMLResponse(content=callback+"("+json.dumps(serviceMS)+");", media_type="application/javascript; charset=UTF-8")
 ### MapServer /0/ route
 
 @app.get("/{serviceName}/MapServer/0")
@@ -317,88 +174,15 @@ def root(serviceName:str, f: str = "json", callback: str=None):
         for i in range(len(interDF.fields)):
             interDF.fields[i].update(case)
 
-        layerSettings = {
-            "currentVersion":10.5,
-            "id":0,
-            "name":serviceName,
-            "type":"Feature Layer",
-            "description":"Data served by KoopPy",
-            "geometryType":"esriGeometry" + multiSanitized,
-            "copyrightText":"",
-            "parentLayer":None,
-            "subLayers":None,
-            "minScale":0,
-            "maxScale":0,
-            "fields": interDF.fields,
-            "drawingInfo":{
-                    "renderer": rendererInfo
-            },
-            "defaultVisibility":True,
-            "extent":{
-                "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-                "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-                "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-                "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-                "spatialReference":{
-                    "wkid":102100,
-                    "latestWkid":3857
-                }
-            },
-            "hasAttachments":False,
-            "displayField":"OBJECTID",
-            "typeIdField":None,
-            "relationships":[],
-            "canModifyLayer":False,
-            "htmlPopupType": "esriServerHTMLPopupTypeNone",
-            "canScaleSymbols":False,
-            "hasLabels":False,
-            "capabilities":"Query",
-            "maxRecordCount":1000,
-            "supportsStatistics":True,
-            "supportsAdvancedQueries":False,
-            "supportedQueryFormats":"JSON",
-            "supportsOutFieldsSqlExpression": True,
-            "ownershipBasedAccessControlForFeatures":{
-                "allowOthersToQuery":True
-            },
-            "useStandardizedQueries":True,
-            "advancedQueryCapabilities":{
-                "useStandardizedQueries":True,
-                "supportsQueryWithResultType": True,
-                "supportsStatistics":True,
-                "supportsOrderBy":True,
-                "supportsDistinct":True,
-                "supportsPagination":True,
-                "supportsTrueCurve":False,
-                "supportsReturningQueryExtent":True,
-                "supportsQueryWithDistance":False
-            },
-            "dateFieldsTimeReference":None,
-            "isDataVersioned":False,
-            "supportsRollbackOnFailureParameter":True,
-            "hasM":False,
-            "hasZ":False,
-            "allowGeometryUpdates":False,
-            "objectIdField":"OBJECTID",
-            "uniqueIdField" : 
-                {
-                  "name" : "OBJECTID", 
-                  "isSystemMaintained" : True
-                },
-            "globalIdField":"",
-            "types":[
-                
-            ],
-            "templates":[
-                {
-                    "name": serviceName,
-                    "description": "",
-                    "drawingTool" : "esriFeatureEditTool" + multiSanitized,
-                    "prototype": {"attributes":{}}      
-                }
-            ],
-            "hasStaticData":True
-            }
+        layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
+        layerSettings["name"] = serviceName
+        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
+        layerSettings["fields"] = interDF.fields
+        layerSettings["drawingInfo"]["renderer"] = rendererInfo
+        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]  
         if callback is None:
             return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
         else:
@@ -427,104 +211,37 @@ def root(serviceName:str, callback: str=None):
         esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
         interDF = FeatureSet.from_dataframe(df=esriGDF)
 
-        layerSettings = {
-            "layers":[{
-              "currentVersion":10.5,
-              "id":0,
-              "name":serviceName,
-              "type":"Feature Layer",
-              "description":"Data served by KoopPy",
-              "geometryType":"esriGeometry" + multiSanitized,
-              "copyrightText":" ",
-              "parentLayer":None,
-              "subLayers":[],
-              "minScale":0,
-              "maxScale":0,
-              "sourceSpatialReference":{
-                      "wkid":102100,
-                      "latestWkid":3857
-                  },
-              "drawingInfo":{
-                      "renderer": rendererInfo
-              },
-              "defaultVisibility":True,
-              "extent":{
-                  "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-                  "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-                  "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-                  "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-                  "spatialReference":{
-                      "wkid":102100,
-                      "latestWkid":3857
-                  }
-              },
-              "hasAttachments":False,
-              "htmlPopupType":"esriServerHTMLPopupTypeAsHTMLText",
-              "displayField":"OBJECTID",
-              "typeIdField":None,
-              "fields":[],
-              "relationships":[],
-              "canModifyLayer":True,
-              "canScaleSymbols":False,
-              "hasLabels":False,
-              "capabilities":"Query",
-              "maxRecordCount":1000,
-              "supportsStatistics":True,
-              "supportsAdvancedQueries":False,
-              "supportedQueryFormats":"JSON",
-              "supportsOutFieldsSqlExpression": True,
-              "ownershipBasedAccessControlForFeatures":{
-                  "allowOthersToQuery":True
-              },
-              "useStandardizedQueries":True,
-              "advancedQueryCapabilities":{
-                  "useStandardizedQueries":True,
-                  "supportsStatistics":True,
-                  "supportsOrderBy":True,
-                  "supportsDistinct":True,
-                  "supportsPagination":True,
-                  "supportsTrueCurve":False,
-                  "supportsReturningQueryExtent":True,
-                  "supportsQueryWithDistance":True
-              },
-              "dateFieldsTimeReference":None,
-              "isDataVersioned":False,
-              "supportsRollbackOnFailureParameter":True,
-              "hasM":False,
-              "hasZ":False,
-              "allowGeometryUpdates":False,
-              "objectIdField":"OBJECTID",
-              "uniqueIdField" : 
-                  {
-                    "name" : "OBJECTID", 
-                    "isSystemMaintained" : True
-                  },
-              "globalIdField":"",
-              "types":[
-                  
-              ],
-              "templates":[
-                  
-              ],
-              "fields":interDF.fields,
-              "hasStaticData":True
-              }
-              ]
-        }
+        layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
+        layerSettings["name"] = serviceName
+        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
+        layerSettings["fields"] = interDF.fields
+        layerSettings["drawingInfo"]["renderer"] = rendererInfo
+        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]  
         if callback is None:
-          return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+          return JSONResponse(content={"layers":[layerSettings]}, media_type="application/json; charset=utf-8")
         else:
-          return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+          return HTMLResponse(content=callback+"("+json.dumps({"layers":[layerSettings]})+");", media_type="application/javascript; charset=UTF-8")
 
 
 ### MapServer export image route - supports bbox, size and dpi. Currently outputs blue colormap but can be adjusted as a dynamicLayer.
 ### No statistics yet. No jpg support - just plain 32bit png
 
 @app.get("/{serviceName}/MapServer/export")
-def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None):
+def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamicLayers: str=""):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
+        if dynamicLayers != "":
+          dynamicLayers = json.loads(dynamicLayers)
+          dynLayerFill = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["color"]
+          dynLayerOutline = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["outline"]
+        else:
+          dynLayerFill = [75,172,198,161]
+          dynLayerOutline = {"color": [150,150,150,155], "width": 0.75}
+        
         boundingBox1 = bbox.split(",")
         boundingBox = []
         for element in boundingBox1:
@@ -532,7 +249,7 @@ def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None):
         imgSize = size.split(",")
         mpl.rcParams[ 'figure.figsize' ] = (int(imgSize[0])/dpi,int(imgSize[1])/dpi)
         mpl.rcParams[ 'figure.dpi' ] = dpi
-        image = servicesDict[serviceName].plot(cmap="Blues")
+        image = servicesDict[serviceName].plot(linewidth = dynLayerOutline["width"],edgecolor=matplotlib.colors.to_hex([a/255.0 for a in dynLayerOutline["color"]]),color=matplotlib.colors.to_hex([a/255.0 for a in dynLayerFill]))
         image.set_xlim(boundingBox[0], boundingBox[2])
         image.set_ylim(boundingBox[1], boundingBox[3])
         image.set_axis_off();
@@ -570,91 +287,17 @@ def root(serviceName:str, callback: str=None):
       for i in range(len(interDF.fields)):
           interDF.fields[i].update(case)
 
-      layerSettings = {
-          "currentVersion":10.5,
-          "name":serviceName + "_0",
-          "type":"Feature Layer",
-          "description":"Data served by KoopPy",
-          "geometryType":"esriGeometry" + multiSanitized,
-          "copyrightText":"",
-          "parentLayer":None,
-          "subLayers":None,
-          "minScale":0,
-          "maxScale":0,
-          "sourceSpatialReference":{
-                      "wkid":102100,
-                      "latestWkid":3857
-                  },
-          "fields": interDF.fields,
-          "drawingInfo":{
-                  "renderer": rendererInfo
-          },
-          "defaultVisibility":True,
-          "extent":{
-              "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-              "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-              "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-              "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-              "spatialReference":{
-                  "wkid":102100,
-                  "latestWkid":3857
-              }
-          },
-          "hasAttachments":False,
-          "displayField":"OBJECTID",
-          "typeIdField":None,
-          "relationships":[],
-          "canModifyLayer":False,
-          "htmlPopupType": "esriServerHTMLPopupTypeNone",
-          "canScaleSymbols":False,
-          "hasLabels":False,
-          "capabilities":"Query",
-          "maxRecordCount":1000,
-          "supportsStatistics":True,
-          "supportsAdvancedQueries":False,
-          "supportedQueryFormats":"JSON",
-          "supportsOutFieldsSqlExpression": True,
-          "ownershipBasedAccessControlForFeatures":{
-              "allowOthersToQuery":True
-          },
-          "useStandardizedQueries":True,
-          "advancedQueryCapabilities":{
-              "useStandardizedQueries":True,
-              "supportsQueryWithResultType": True,
-              "supportsStatistics":True,
-              "supportsOrderBy":True,
-              "supportsDistinct":True,
-              "supportsPagination":True,
-              "supportsTrueCurve":False,
-              "supportsReturningQueryExtent":True,
-              "supportsQueryWithDistance":False
-          },
-          "dateFieldsTimeReference":None,
-          "isDataVersioned":False,
-          "supportsRollbackOnFailureParameter":True,
-          "hasM":False,
-          "hasZ":False,
-          "allowGeometryUpdates":False,
-          "objectIdField":"OBJECTID",
-          "uniqueIdField" : 
-              {
-                "name" : "OBJECTID", 
-                "isSystemMaintained" : True
-              },
-          "globalIdField":"",
-          "types":[
-              
-          ],
-          "templates":[
-              {
-                  "name": serviceName,
-                  "description": "",
-                  "drawingTool" : "esriFeatureEditTool" + multiSanitized,
-                  "prototype": {"attributes":{}}      
-              }
-          ],
-          "hasStaticData":True
-          }
+      
+      layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
+      layerSettings["name"] = serviceName
+      layerSettings["geometryType"] = "esriGeometry" + multiSanitized
+      layerSettings["fields"] = interDF.fields
+      layerSettings["drawingInfo"]["renderer"] = rendererInfo
+      layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+      layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+      layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+      layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]        
+
       if callback is None:
           return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
       else:
@@ -686,85 +329,14 @@ def root(serviceName:str):
         esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
         interDF = FeatureSet.from_dataframe(df=esriGDF)
 
-        layerSettings = {
-            "currentVersion":10.5,
-            "id":0,
-            "name":serviceName,
-            "type":"Feature Layer",
-            "description":"Data served by KoopPy",
-            "geometryType":"esriGeometry" + multiSanitized,
-            "copyrightText":" ",
-            "parentLayer":None,
-            "subLayers":None,
-            "minScale":0,
-            "maxScale":0,
-            "drawingInfo":{
-                    "renderer": rendererInfo
-            },
-            "defaultVisibility":True,
-            "extent":{
-                "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-                "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-                "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-                "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-                "spatialReference":{
-                    "wkid":3857,
-                    "latestWkid":3857
-                }
-            },
-            "hasAttachments":False,
-            "htmlPopupType":"esriServerHTMLPopupTypeAsHTMLText",
-            "displayField":"OBJECTID",
-            "typeIdField":None,
-            "fields":[],
-            "relationships":[],
-            "canModifyLayer":False,
-            "canScaleSymbols":False,
-            "hasLabels":False,
-            "capabilities":"Query",
-            "maxRecordCount":1000,
-            "supportsStatistics":True,
-            "supportsAdvancedQueries":False,
-            "supportedQueryFormats":"JSON",
-            "supportsOutFieldsSqlExpression": True,
-            "ownershipBasedAccessControlForFeatures":{
-                "allowOthersToQuery":True
-            },
-            "useStandardizedQueries":True,
-            "advancedQueryCapabilities":{
-                "useStandardizedQueries":True,
-                "supportsStatistics":True,
-                "supportsOrderBy":True,
-                "supportsDistinct":True,
-                "supportsPagination":True,
-                "supportsTrueCurve":False,
-                "supportsReturningQueryExtent":True,
-                "supportsQueryWithDistance":True
-            },
-            "dateFieldsTimeReference":None,
-            "isDataVersioned":False,
-            "supportsRollbackOnFailureParameter":True,
-            "hasM":False,
-            "hasZ":False,
-            "allowGeometryUpdates":False,
-            "objectIdField":"OBJECTID",
-            "uniqueIdField" : 
-                {
-                  "name" : "OBJECTID", 
-                  "isSystemMaintained" : True
-                },
-            "globalIdField":"",
-            "types":[
-                
-            ],
-            "templates":[
-                
-            ],
-            "fields":[
-              interDF.fields
-            ],
-            "hasStaticData":True
-            }
+        layerSettings["name"] = serviceName
+        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
+        layerSettings["fields"] = interDF.fields
+        layerSettings["drawingInfo"]["renderer"] = rendererInfo
+        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]        
 
         return layerSettings
 
@@ -795,92 +367,50 @@ def root(serviceName:str, f: str = "json", callback: str=None):
         for i in range(len(interDF.fields)):
             interDF.fields[i].update(case)
 
-        layerSettings = {
-            "currentVersion":10.5,
-            "id":0,
-            "name":serviceName,
-            "type":"Feature Layer",
-            "description":"Data served by KoopPy",
-            "geometryType":"esriGeometry" + multiSanitized,
-            "copyrightText":"",
-            "parentLayer":None,
-            "subLayers":None,
-            "minScale":0,
-            "maxScale":0,
-            "fields": interDF.fields,
-            "drawingInfo":{
-                    "renderer": rendererInfo
-            },
-            "defaultVisibility":True,
-            "extent":{
-                "xmin": servicesDict[serviceName].geometry.total_bounds[0],
-                "ymin": servicesDict[serviceName].geometry.total_bounds[1],
-                "xmax": servicesDict[serviceName].geometry.total_bounds[2],
-                "ymax": servicesDict[serviceName].geometry.total_bounds[3],
-                "spatialReference":{
-                    "wkid":102100,
-                    "latestWkid":3857
-                }
-            },
-            "hasAttachments":False,
-            "displayField":interDF.fields[1]["name"],
-            "typeIdField":None,
-            "relationships":[],
-            "canModifyLayer":False,
-            "htmlPopupType": "esriServerHTMLPopupTypeNone",
-            "canScaleSymbols":False,
-            "hasLabels":False,
-            "capabilities":"Query",
-            "maxRecordCount":1000,
-            "supportsStatistics":True,
-            "supportsAdvancedQueries":False,
-            "supportedQueryFormats":"JSON",
-            "supportsOutFieldsSqlExpression": True,
-            "ownershipBasedAccessControlForFeatures":{
-                "allowOthersToQuery":True
-            },
-            "useStandardizedQueries":True,
-            "advancedQueryCapabilities":{
-                "useStandardizedQueries":True,
-                "supportsQueryWithResultType": True,
-                "supportsStatistics":True,
-                "supportsOrderBy":True,
-                "supportsDistinct":True,
-                "supportsPagination":True,
-                "supportsTrueCurve":False,
-                "supportsReturningQueryExtent":True,
-                "supportsQueryWithDistance":False
-            },
-            "dateFieldsTimeReference":None,
-            "isDataVersioned":False,
-            "supportsRollbackOnFailureParameter":True,
-            "hasM":False,
-            "hasZ":False,
-            "allowGeometryUpdates":False,
-            "objectIdField":"OBJECTID",
-            "uniqueIdField" : 
-                {
-                  "name" : "OBJECTID", 
-                  "isSystemMaintained" : True
-                },
-            "globalIdField":"",
-            "types":[
-                
-            ],
-            "templates":[
-                {
-                    "name": serviceName,
-                    "description": "",
-                    "drawingTool" : "esriFeatureEditTool" + multiSanitized,
-                    "prototype": {"attributes":{}}      
-                }
-            ],
-            "hasStaticData":True
-            }
+        layerSettings["name"] = serviceName
+        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
+        layerSettings["fields"] = interDF.fields
+        layerSettings["drawingInfo"]["renderer"] = rendererInfo
+        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
+        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
+        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
+        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
         if callback is None:
             return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
         else:
             return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+
+@app.get("/{serviceName}/FeatureServer/0/generateRenderer")
+def root(serviceName:str, f: str = "json", callback: str=None, classificationDef: str=None):
+    if serviceName not in servicesDict.keys():
+        raise HTTPException(status_code=404, detail="Item not found")
+    else:
+        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = "Polygon"
+        elif servicesDict[serviceName].geom_type[0] == "Polygon":
+            rendererInfo = polygonRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Line":
+            rendererInfo = lineRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+        elif servicesDict[serviceName].geom_type[0] == "Point":
+            rendererInfo = pointRenderer
+            multiSanitized = servicesDict[serviceName].geom_type[0]
+
+        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
+        clasDef = json.loads(classificationDef)
+        r = generate_renderer(
+          geometry_type = multiSanitized,
+          sdf_or_series = esriGDF,
+          label =  serviceName,
+          renderer_type = clasDef["type"][0]
+        )
+        if callback is None:
+            return JSONResponse(content=r, media_type="application/json; charset=utf-8")
+        else:
+            return HTMLResponse(content=callback+"("+json.dumps(r)+");", media_type="application/javascript; charset=UTF-8")
+
 
 ### FeatureServer query operation route - Supports basic visualization and querying of data
 
@@ -926,7 +456,11 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
 
         ### Handle format json and returnCountOnly
         elif f== "json" and returnCountOnly == "true":
-          return {"count": len(esriServicesDict[serviceName].index)}
+          count = {"count": len(esriServicesDict[serviceName].index)}
+          if callback is None:
+              return JSONResponse(content=count,media_type="application/json; charset=utf-8")
+          else:
+              return HTMLResponse(content=callback+"("+json.dumps(count)+")", media_type="application/javascript; charset=utf-8")
 
         #### Handle format json, resultOffset and resutlRecordCount
         elif f== "json" and resultOffset != None and resultRecordCount != None:
@@ -952,7 +486,10 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
                 "features" : interDF.to_dict()["features"],
                 "exceededTransferLimit": False
               }
-          return esriJSON
+          if callback is None:
+              return JSONResponse(content=esriJSON,media_type="application/json; charset=utf-8")
+          else:
+              return HTMLResponse(content=callback+"("+json.dumps(esriJSON)+")", media_type="application/javascript; charset=utf-8")
 
         ###Handle format json and whole statistics shenanigangs
         elif f== "json" and outStatistics !=None:
@@ -990,7 +527,11 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
               "features": features,
               "fields": fields
             }
-            return statReturn
+            if callback is None:
+                return JSONResponse(content=statReturn,media_type="application/json; charset=utf-8")
+            else:
+                return HTMLResponse(content=callback+"("+json.dumps(statReturn)+")", media_type="application/javascript; charset=utf-8")
+
           else:  
             stats = {}
             i = 0
@@ -1033,7 +574,10 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
               "fields": fields
             }
 
-            return statReturn
+            if callback is None:
+                return JSONResponse(content=statReturn,media_type="application/json; charset=utf-8")
+            else:
+                return HTMLResponse(content=callback+"("+json.dumps(statReturn)+")", media_type="application/javascript; charset=utf-8")
 
         #### whole format json query handling
         elif f == "json":
@@ -1055,7 +599,10 @@ def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1"
               "features" : interDF.to_dict()["features"],
               "exceededTransferLimit": False
             }
-              return esriJSON
+              if callback is None:
+                return JSONResponse(content=esriJSON,media_type="application/json; charset=utf-8")
+              else:
+                return HTMLResponse(content=callback+"("+json.dumps(esriJSON)+")", media_type="application/javascript; charset=utf-8")
             else:
               geometryParsed = json.loads(geometry)
               try:
