@@ -31,7 +31,7 @@ For the example file inside the data folder ```ne_110m_admin_0_countries.shp``` 
 
 **OR**
 
-use the dockerfile.
+- use the dockerfile.
 
 
 # TODO:
