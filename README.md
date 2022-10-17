@@ -29,6 +29,10 @@ For the example file inside the data folder ```ne_110m_admin_0_countries.shp``` 
 - Run the conda environment
 - Serve using ```uvicorn``` (e.g. ```uvicorn main:app```)
 
+**OR**
+
+use the dockerfile.
+
 
 # TODO:
 
@@ -36,7 +40,6 @@ For the example file inside the data folder ```ne_110m_admin_0_countries.shp``` 
 - Properly implement renderers
 - Implement PBF output
 - Clean up code
-- Dockerize
 - etc.
 
 
