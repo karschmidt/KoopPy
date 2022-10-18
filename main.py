@@ -1,5 +1,5 @@
 ### FastAPI stuff
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 ##from brotli_asgi import BrotliMiddleware
@@ -18,6 +18,7 @@ from math import isnan
 import warnings
 import matplotlib
 
+
 ###JSON Templates
 from rendererTemplates import pointRenderer, lineRenderer, polygonRenderer
 from jsonTemplates import serviceFS, serviceMS, layerSettings
@@ -26,7 +27,11 @@ from jsonTemplates import serviceFS, serviceMS, layerSettings
 from io import BytesIO
 from starlette.responses import StreamingResponse
 import matplotlib as mpl
-
+import ast
+import base64
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
 
 ### PBF libs
 import FeatureCollection_pb2
@@ -226,39 +231,98 @@ def root(serviceName:str, callback: str=None):
           return HTMLResponse(content=callback+"("+json.dumps({"layers":[layerSettings]})+");", media_type="application/javascript; charset=UTF-8")
 
 
-### MapServer export image route - supports bbox, size and dpi. Currently outputs blue colormap but can be adjusted as a dynamicLayer.
+### MapServer export image route - supports bbox, size and dpi.
 ### No statistics yet. No jpg support - just plain 32bit png
+### For custom symbology layers (Points) the post request appends isCustomSymbol=True and the get /export handles the new symbology accordingly
 
 @app.get("/{serviceName}/MapServer/export")
-def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamicLayers: str=""):
+def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamicLayers: str="", isCustomSymbol: str=""):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if dynamicLayers != "":
-          dynamicLayers = json.loads(dynamicLayers)
-          dynLayerFill = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["color"]
-          dynLayerOutline = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["outline"]
+        if isCustomSymbol != "True":
+          if dynamicLayers != "":
+            dynamicLayers = json.loads(dynamicLayers)
+            dynLayerFill = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["color"]
+            dynLayerOutline = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["outline"]
+          else:
+            dynLayerFill = [75,172,198,161]
+            dynLayerOutline = {"color": [150,150,150,155], "width": 0.75}
+          
+          boundingBox1 = bbox.split(",")
+          boundingBox = []
+          for element in boundingBox1:
+            boundingBox.append(float(element))
+          imgSize = size.split(",")
+          mpl.rcParams[ 'figure.figsize' ] = (int(imgSize[0])/dpi,int(imgSize[1])/dpi)
+          mpl.rcParams[ 'figure.dpi' ] = dpi
+          image = servicesDict[serviceName].plot(linewidth = dynLayerOutline["width"],edgecolor=matplotlib.colors.to_hex([a/255.0 for a in dynLayerOutline["color"]]),color=matplotlib.colors.to_hex([a/255.0 for a in dynLayerFill]))
+          image.set_xlim(boundingBox[0], boundingBox[2])
+          image.set_ylim(boundingBox[1], boundingBox[3])
+          image.set_axis_off();
+          image.figure.tight_layout(pad=0)
+          buf = BytesIO()
+          image.figure.savefig(buf, format="png", transparent=True, pad_inches=0, dpi=dpi)
+          buf.seek(0)
         else:
-          dynLayerFill = [75,172,198,161]
-          dynLayerOutline = {"color": [150,150,150,155], "width": 0.75}
-        
-        boundingBox1 = bbox.split(",")
-        boundingBox = []
-        for element in boundingBox1:
-           boundingBox.append(float(element))
-        imgSize = size.split(",")
-        mpl.rcParams[ 'figure.figsize' ] = (int(imgSize[0])/dpi,int(imgSize[1])/dpi)
-        mpl.rcParams[ 'figure.dpi' ] = dpi
-        image = servicesDict[serviceName].plot(linewidth = dynLayerOutline["width"],edgecolor=matplotlib.colors.to_hex([a/255.0 for a in dynLayerOutline["color"]]),color=matplotlib.colors.to_hex([a/255.0 for a in dynLayerFill]))
-        image.set_xlim(boundingBox[0], boundingBox[2])
-        image.set_ylim(boundingBox[1], boundingBox[3])
-        image.set_axis_off();
-        image.figure.tight_layout(pad=0)
-        buf = BytesIO()
-        image.figure.savefig(buf, format="png", transparent=True, pad_inches=0, dpi=dpi)
-        buf.seek(0)
+          dynamicLayers = ast.literal_eval(dynamicLayers)
+          imageData = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["imageData"].replace(" ","+")
+          base64_decoded = base64.b64decode(imageData)
+
+          
+          imageWidth = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["width"]
+          imageHeight = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["height"]
+          imageB64 = Image.open(BytesIO(base64_decoded))
+
+          boundingBox1 = bbox.split(",")
+          boundingBox = []
+          for element in boundingBox1:
+            boundingBox.append(float(element))
+          imgSize = size.split(",")
+          mpl.rcParams[ 'figure.figsize' ] = (int(imgSize[0])/dpi,int(imgSize[1])/dpi)
+          mpl.rcParams[ 'figure.dpi' ] = dpi
+          image = servicesDict[serviceName].plot(marker="$6$", markersize=imageWidth)
+          image.set_xlim(boundingBox[0], boundingBox[2])
+          image.set_ylim(boundingBox[1], boundingBox[3])
+
+          #either get coords of all features and add image.figure on top or do something with matplotlib.path.Path as the marker symbol
+
+          #image.figure.figimage(imageB64.resize(size=(int(imageWidth),int(imageHeight))),500,100,origin="upper")
+
+          image.set_axis_off();
+          image.figure.tight_layout(pad=0)
+          buf = BytesIO()
+          image.figure.savefig(buf, format="png", transparent=True, pad_inches=0, dpi=dpi)
+          buf.seek(0)
+
+
         
     return StreamingResponse(buf, media_type="image/png")
+
+### MapServer export image route for Point Layers with base64 symbols.
+
+@app.post("/{serviceName}/MapServer/export")
+async def root(serviceName:str, request: Request):
+    if serviceName not in servicesDict.keys():
+        raise HTTPException(status_code=404, detail="Item not found")
+    else:
+        req_info = await request.form()
+        dynamicLayers = json.loads(req_info["dynamicLayers"])
+        postInfos = req_info
+        postAnswer = {
+          "href": "https://"+request.client.host+"/"+serviceName+"/MapServer/export?bbox="+postInfos["bbox"][1:-1]+"&dpi="+postInfos["dpi"]+"&size="+postInfos["size"][1:-1]+"&dynamicLayers="+str(dynamicLayers)+"&isCustomSymbol=True",
+          "width": int(postInfos["size"].split(",")[0][1:100]),
+          "height": int(postInfos["size"].split(",")[1][0:-1]),
+          "extent": {
+            "xmin":postInfos["bbox"].split(",")[0][1:100],
+            "ymin":postInfos["bbox"].split(",")[1],
+            "xmax":postInfos["bbox"].split(",")[2],
+            "ymax":postInfos["bbox"].split(",")[3][0:-1]
+          },
+          "scale": "is this even necessary?"
+        }
+        
+    return postAnswer
 
 ### MapServer dynamicLayer route - allows to adjust basic symbology inside MapViewer
 
