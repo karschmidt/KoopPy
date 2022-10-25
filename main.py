@@ -17,6 +17,8 @@ import pandas as pd
 from math import isnan
 import warnings
 import matplotlib
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
+import matplotlib.pyplot as plt
 
 
 ###JSON Templates
@@ -273,6 +275,7 @@ def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamic
           imageWidth = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["width"]
           imageHeight = dynamicLayers[0]["drawingInfo"]["renderer"]["symbol"]["height"]
           imageB64 = Image.open(BytesIO(base64_decoded))
+          imagebox = OffsetImage(imageB64.resize(size=(int(imageWidth),int(imageHeight))), zoom=1)
 
           boundingBox1 = bbox.split(",")
           boundingBox = []
@@ -281,13 +284,15 @@ def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamic
           imgSize = size.split(",")
           mpl.rcParams[ 'figure.figsize' ] = (int(imgSize[0])/dpi,int(imgSize[1])/dpi)
           mpl.rcParams[ 'figure.dpi' ] = dpi
-          image = servicesDict[serviceName].plot(marker="$6$", markersize=imageWidth)
+
+          image = servicesDict[serviceName].plot(marker="", markersize=imageWidth)
+          data = image.get_children()[0].get_offsets()
+          for item in data:
+            ab = AnnotationBbox(imagebox,xy=(item[0],item[1]),xybox=(0,0),xycoords='data',boxcoords="offset points", frameon=False)
+            image.add_artist(ab)
+          
           image.set_xlim(boundingBox[0], boundingBox[2])
           image.set_ylim(boundingBox[1], boundingBox[3])
-
-          #either get coords of all features and add image.figure on top or do something with matplotlib.path.Path as the marker symbol
-
-          #image.figure.figimage(imageB64.resize(size=(int(imageWidth),int(imageHeight))),500,100,origin="upper")
 
           image.set_axis_off();
           image.figure.tight_layout(pad=0)
@@ -310,14 +315,14 @@ async def root(serviceName:str, request: Request):
         dynamicLayers = json.loads(req_info["dynamicLayers"])
         postInfos = req_info
         postAnswer = {
-          "href": "https://"+request.client.host+"/"+serviceName+"/MapServer/export?bbox="+postInfos["bbox"][1:-1]+"&dpi="+postInfos["dpi"]+"&size="+postInfos["size"][1:-1]+"&dynamicLayers="+str(dynamicLayers)+"&isCustomSymbol=True",
-          "width": int(postInfos["size"].split(",")[0][1:100]),
-          "height": int(postInfos["size"].split(",")[1][0:-1]),
+          "href": "https://"+request.client.host+"/"+serviceName+"/MapServer/export?bbox="+postInfos["bbox"]+"&dpi="+postInfos["dpi"]+"&size="+postInfos["size"]+"&dynamicLayers="+str(dynamicLayers)+"&isCustomSymbol=True",
+          "width": int(postInfos["size"].split(",")[0]),
+          "height": int(postInfos["size"].split(",")[1]),
           "extent": {
-            "xmin":postInfos["bbox"].split(",")[0][1:100],
+            "xmin":postInfos["bbox"].split(",")[0],
             "ymin":postInfos["bbox"].split(",")[1],
             "xmax":postInfos["bbox"].split(",")[2],
-            "ymax":postInfos["bbox"].split(",")[3][0:-1]
+            "ymax":postInfos["bbox"].split(",")[3]
           },
           "scale": "is this even necessary?"
         }
