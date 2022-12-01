@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 ### Geo loading and conversion libs
 import geopandas as gpd
+import fiona
 from shapely.geometry import Polygon, box
 import os
 import json
@@ -76,6 +77,26 @@ for file in os.listdir(directory):
         filenames.append(os.path.splitext(filename)[0])
         esriServices.append(esriGDF)
         continue
+    if filename.endswith(".gdb"):
+      for layername in fiona.listlayers(os.path.join(directory, filename)):
+          geos= gpd.read_file(os.path.join(directory, filename), layer=layername)
+          geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
+          esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
+          esriGDF.insert(0, "OBJECTID",esriGDF.index)
+          services.append(geosReprojected)
+          filenames.append(os.path.splitext(filename)[0]+"_"+layername)
+          esriServices.append(esriGDF)
+    if filename.endswith(".urltxt"):
+      with open(os.path.join(directory, filename)) as f:
+        url = f.read()
+        geos= gpd.read_file(url)
+        geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
+        esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
+        esriGDF.insert(0, "OBJECTID",esriGDF.index)
+        services.append(geosReprojected)
+        filenames.append(os.path.splitext(filename)[0])
+        esriServices.append(esriGDF)
+        continue
     else:
         continue
 
@@ -95,7 +116,8 @@ def root (f: str="json"):
           "authInfo" : 
           {
             "isTokenBasedSecurity" : False
-          }
+          },
+          "services": filenames
         }
     return infoJSON
 
@@ -429,8 +451,7 @@ def root(serviceName:str, f: str = "json", callback: str=None):
             rendererInfo = pointRenderer
             multiSanitized = servicesDict[serviceName].geom_type[0]
 
-        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
-        interDF = FeatureSet.from_dataframe(df=esriGDF)
+        interDF = FeatureSet.from_dataframe(df=esriServicesDict[serviceName])
         case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
 
         for i in range(len(interDF.fields)):
