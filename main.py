@@ -63,12 +63,83 @@ directory = r"./data"
 services = []
 filenames = []
 esriServices = []
+servicesFS = []
+servicesMS = []
+servicesLayerSettings = []
 
+def create_servicesFS(geosReprojected,serviceName):
+  if geosReprojected.geom_type[0] == "MultiPolygon":
+      multiSanitized = "Polygon"
+  else:
+      multiSanitized = geosReprojected.geom_type[0]
+  tempServiceFS = serviceFS
+  tempServiceFS["initialExtent"]["xmin"] = geosReprojected.geometry.total_bounds[0]
+  tempServiceFS["initialExtent"]["ymin"] = geosReprojected.geometry.total_bounds[1]
+  tempServiceFS["initialExtent"]["xmax"] = geosReprojected.geometry.total_bounds[2]
+  tempServiceFS["initialExtent"]["ymax"] = geosReprojected.geometry.total_bounds[3]
+
+  tempServiceFS["fullExtent"]["xmin"] = tempServiceFS["initialExtent"]["xmin"]
+  tempServiceFS["fullExtent"]["ymin"] = tempServiceFS["initialExtent"]["ymin"]
+  tempServiceFS["fullExtent"]["xmax"] = tempServiceFS["initialExtent"]["xmax"]
+  tempServiceFS["fullExtent"]["ymax"] = tempServiceFS["initialExtent"]["ymax"]
+
+  tempServiceFS["layers"][0]["name"] = serviceName
+  tempServiceFS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
+  return tempServiceFS
+
+def create_servicesMS(geosReprojected,filename):
+  if geosReprojected.geom_type[0] == "MultiPolygon":
+      multiSanitized = "Polygon"
+  else:
+      multiSanitized = geosReprojected.geom_type[0]
+  tempServiceMS = serviceMS
+  tempServiceMS["layers"][0]["name"] = os.path.splitext(filename)[0]
+  tempServiceMS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
+  tempServiceMS["initialExtent"]["xmin"] = geosReprojected.geometry.total_bounds[0]
+  tempServiceMS["initialExtent"]["ymin"] = geosReprojected.geometry.total_bounds[1]
+  tempServiceMS["initialExtent"]["xmax"] = geosReprojected.geometry.total_bounds[2]
+  tempServiceMS["initialExtent"]["ymax"] = geosReprojected.geometry.total_bounds[3]
+  tempServiceMS["fullExtent"]["xmin"] = tempServiceMS["initialExtent"]["xmin"]
+  tempServiceMS["fullExtent"]["ymin"] = tempServiceMS["initialExtent"]["ymin"]
+  tempServiceMS["fullExtent"]["xmax"] = tempServiceMS["initialExtent"]["xmax"]
+  tempServiceMS["fullExtent"]["ymax"] = tempServiceMS["initialExtent"]["ymax"]
+  return tempServiceMS
+
+def create_layerSettings(geoReprojected, filename):
+  if geoReprojected.geom_type[0] == "MultiPolygon":
+      rendererInfo = polygonRenderer
+      multiSanitized = "Polygon"
+  elif geoReprojected.geom_type[0] == "Polygon":
+      rendererInfo = polygonRenderer
+      multiSanitized = geoReprojected.geom_type[0]
+  elif geoReprojected.geom_type[0] == "Line":
+      rendererInfo = lineRenderer
+      multiSanitized = geoReprojected.geom_type[0]
+  elif geoReprojected.geom_type[0] == "Point":
+      rendererInfo = pointRenderer
+      multiSanitized = geoReprojected.geom_type[0]
+
+  interDF = FeatureSet.from_dataframe(df=esriGDF)
+  case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
+
+  for i in range(len(interDF.fields)):
+      interDF.fields[i].update(case)
+  tempLayerSettings = layerSettings
+  tempLayerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
+  tempLayerSettings["name"] = filename
+  tempLayerSettings["geometryType"] = "esriGeometry" + multiSanitized
+  tempLayerSettings["fields"] = interDF.fields
+  tempLayerSettings["drawingInfo"]["renderer"] = rendererInfo
+  tempLayerSettings["extent"]["xmin"] = geoReprojected.geometry.total_bounds[0]
+  tempLayerSettings["extent"]["ymin"] = geoReprojected.geometry.total_bounds[1]
+  tempLayerSettings["extent"]["xmax"] = geoReprojected.geometry.total_bounds[2]
+  tempLayerSettings["extent"]["ymax"] = geoReprojected.geometry.total_bounds[3]
+  return tempLayerSettings
 
 ###.fillna to handle NaN values which fastapi can't json decode
 for file in os.listdir(directory):
     filename = os.fsdecode(file)
-    if filename.endswith(".geojson") or filename.endswith(".shp"): 
+    if filename.endswith(".geojson") or filename.endswith(".shp") or filename.endswith(".urltext"): 
         geos= gpd.read_file(os.path.join(directory, filename))
         geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
         esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
@@ -76,9 +147,11 @@ for file in os.listdir(directory):
         services.append(geosReprojected)
         filenames.append(os.path.splitext(filename)[0])
         esriServices.append(esriGDF)
-        continue
+        servicesFS.append(json.dumps(create_servicesFS(geosReprojected,os.path.splitext(filename)[0])))
+        servicesLayerSettings.append(json.dumps(create_layerSettings(geosReprojected,os.path.splitext(filename)[0])))
+        servicesMS.append(json.dumps(create_servicesMS(geosReprojected,os.path.splitext(filename)[0])))
     if filename.endswith(".gdb"):
-      for layername in fiona.listlayers(os.path.join(directory, filename)):
+        for layername in fiona.listlayers(os.path.join(directory, filename)):
           geos= gpd.read_file(os.path.join(directory, filename), layer=layername)
           geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
           esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
@@ -86,22 +159,19 @@ for file in os.listdir(directory):
           services.append(geosReprojected)
           filenames.append(os.path.splitext(filename)[0]+"_"+layername)
           esriServices.append(esriGDF)
-    if filename.endswith(".urltxt"):
-      with open(os.path.join(directory, filename)) as f:
-        url = f.read()
-        geos= gpd.read_file(url)
-        geosReprojected = geos.to_crs(epsg=3857).fillna(value="noData")
-        esriGDF = GeoAccessor.from_geodataframe(geosReprojected,column_name="geometry")
-        esriGDF.insert(0, "OBJECTID",esriGDF.index)
-        services.append(geosReprojected)
-        filenames.append(os.path.splitext(filename)[0])
-        esriServices.append(esriGDF)
+          servicesFS.append(json.dumps(create_servicesFS(geosReprojected,os.path.splitext(filename)[0])))
+          servicesLayerSettings.append(json.dumps(create_layerSettings(geosReprojected,os.path.splitext(filename)[0])))
+          servicesMS.append(json.dumps(create_servicesMS(geosReprojected,os.path.splitext(filename)[0])))
         continue
     else:
         continue
 
 servicesDict = {filenames[i]: services[i] for i in range(len(filenames))}
 esriServicesDict = {filenames[i]: esriServices[i] for i in range(len(filenames))}
+servicesFSDict = {filenames[i]: json.loads(servicesFS[i]) for i in range(len(filenames))}
+servicesMSDict = {filenames[i]: json.loads(servicesMS[i]) for i in range(len(filenames))}
+layerSettingsDict = {filenames[i]: json.loads(servicesLayerSettings[i]) for i in range(len(filenames))}
+
 
 
 ###/rest/info route -  Don't really know if needed
@@ -128,24 +198,7 @@ def root(serviceName:str):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            multiSanitized = "Polygon"
-        else:
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        serviceFS["initialExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        serviceFS["initialExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        serviceFS["initialExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        serviceFS["initialExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
-
-        serviceFS["fullExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        serviceFS["fullExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        serviceFS["fullExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        serviceFS["fullExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
-
-        serviceFS["layers"][0]["name"] = serviceName
-        serviceFS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
-        
-        return serviceFS
+        return servicesFSDict[serviceName]
 
 ###initial service info page for MapServer
 
@@ -154,28 +207,10 @@ def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            multiSanitized = "Polygon"
-        else:
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-
-        serviceMS["mapName"] = serviceName
-        serviceMS["layers"][0]["name"] = serviceName
-        serviceMS["layers"][0]["geometryType"] = "esriGeometry" + multiSanitized
-        serviceMS["initialExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        serviceMS["initialExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        serviceMS["initialExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        serviceMS["initialExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
-
-        serviceMS["fullExtent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        serviceMS["fullExtent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        serviceMS["fullExtent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        serviceMS["fullExtent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
-
         if callback is None:
-          return JSONResponse(content=serviceMS, media_type="application/json; charset=utf-8")
+          return JSONResponse(content=servicesMSDict[serviceName], media_type="application/json; charset=utf-8")
         else:
-          return HTMLResponse(content=callback+"("+json.dumps(serviceMS)+");", media_type="application/javascript; charset=UTF-8")
+          return HTMLResponse(content=callback+"("+json.dumps(servicesMSDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
 ### MapServer /0/ route
 
 @app.get("/{serviceName}/MapServer/0")
@@ -183,39 +218,10 @@ def root(serviceName:str, f: str = "json", callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = "Polygon"
-        elif servicesDict[serviceName].geom_type[0] == "Polygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Line":
-            rendererInfo = lineRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Point":
-            rendererInfo = pointRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-
-        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
-        interDF = FeatureSet.from_dataframe(df=esriGDF)
-        case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
-
-        for i in range(len(interDF.fields)):
-            interDF.fields[i].update(case)
-
-        layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
-        layerSettings["name"] = serviceName
-        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
-        layerSettings["fields"] = interDF.fields
-        layerSettings["drawingInfo"]["renderer"] = rendererInfo
-        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]  
         if callback is None:
-            return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+            return JSONResponse(content=layerSettingsDict[serviceName], media_type="application/json; charset=utf-8")
         else:
-            return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+            return HTMLResponse(content=callback+"("+json.dumps(layerSettingsDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
 
 ### MapServer layers route
 
@@ -224,35 +230,11 @@ def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = "Polygon"
-        elif servicesDict[serviceName].geom_type[0] == "Polygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Line":
-            rendererInfo = lineRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Point":
-            rendererInfo = pointRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-
-        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
-        interDF = FeatureSet.from_dataframe(df=esriGDF)
-
-        layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
-        layerSettings["name"] = serviceName
-        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
-        layerSettings["fields"] = interDF.fields
-        layerSettings["drawingInfo"]["renderer"] = rendererInfo
-        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]  
+        
         if callback is None:
-          return JSONResponse(content={"layers":[layerSettings]}, media_type="application/json; charset=utf-8")
+          return JSONResponse(content={"layers":[layerSettingsDict[serviceName]]}, media_type="application/json; charset=utf-8")
         else:
-          return HTMLResponse(content=callback+"("+json.dumps({"layers":[layerSettings]})+");", media_type="application/javascript; charset=UTF-8")
+          return HTMLResponse(content=callback+"("+json.dumps({"layers":[layerSettingsDict[serviceName]]})+");", media_type="application/javascript; charset=UTF-8")
 
 
 ### MapServer export image route - supports bbox, size and dpi.
@@ -260,7 +242,7 @@ def root(serviceName:str, callback: str=None):
 ### For custom symbology layers (Points) the post request appends isCustomSymbol=True and the get /export handles the new symbology accordingly
 
 @app.get("/{serviceName}/MapServer/export")
-def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamicLayers: str="", isCustomSymbol: str=""):
+async def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamicLayers: str="", isCustomSymbol: str=""):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
@@ -283,7 +265,7 @@ def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamic
           image = servicesDict[serviceName].plot(linewidth = dynLayerOutline["width"],edgecolor=matplotlib.colors.to_hex([a/255.0 for a in dynLayerOutline["color"]]),color=matplotlib.colors.to_hex([a/255.0 for a in dynLayerFill]))
           image.set_xlim(boundingBox[0], boundingBox[2])
           image.set_ylim(boundingBox[1], boundingBox[3])
-          image.set_axis_off();
+          image.set_axis_off()
           image.figure.tight_layout(pad=0)
           buf = BytesIO()
           image.figure.savefig(buf, format="png", transparent=True, pad_inches=0, dpi=dpi)
@@ -316,7 +298,7 @@ def root(serviceName:str, size: str=None, bbox: str=None, dpi: int=None, dynamic
           image.set_xlim(boundingBox[0], boundingBox[2])
           image.set_ylim(boundingBox[1], boundingBox[3])
 
-          image.set_axis_off();
+          image.set_axis_off()
           image.figure.tight_layout(pad=0)
           buf = BytesIO()
           image.figure.savefig(buf, format="png", transparent=True, pad_inches=0, dpi=dpi)
@@ -358,41 +340,11 @@ def root(serviceName:str, callback: str=None):
   if serviceName not in servicesDict.keys():
       raise HTTPException(status_code=404, detail="Item not found")
   else:
-      if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-          rendererInfo = polygonRenderer
-          multiSanitized = "Polygon"
-      elif servicesDict[serviceName].geom_type[0] == "Polygon":
-          rendererInfo = polygonRenderer
-          multiSanitized = servicesDict[serviceName].geom_type[0]
-      elif servicesDict[serviceName].geom_type[0] == "Line":
-          rendererInfo = lineRenderer
-          multiSanitized = servicesDict[serviceName].geom_type[0]
-      elif servicesDict[serviceName].geom_type[0] == "Point":
-          rendererInfo = pointRenderer
-          multiSanitized = servicesDict[serviceName].geom_type[0]
-
-      esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
-      interDF = FeatureSet.from_dataframe(df=esriGDF)
-      case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
-
-      for i in range(len(interDF.fields)):
-          interDF.fields[i].update(case)
-
       
-      layerSettings["sourceSpatialReference"] = {"wkid":102100,"latestWkid":3857}
-      layerSettings["name"] = serviceName
-      layerSettings["geometryType"] = "esriGeometry" + multiSanitized
-      layerSettings["fields"] = interDF.fields
-      layerSettings["drawingInfo"]["renderer"] = rendererInfo
-      layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-      layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-      layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-      layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]        
-
       if callback is None:
-          return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+          return JSONResponse(content=layerSettingsDict[serviceName], media_type="application/json; charset=utf-8")
       else:
-          return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+          return HTMLResponse(content=callback+"("+json.dumps(layerSettingsDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
 
 
 
@@ -404,32 +356,8 @@ def root(serviceName:str):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = "Polygon"
-        elif servicesDict[serviceName].geom_type[0] == "Polygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Line":
-            rendererInfo = lineRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Point":
-            rendererInfo = pointRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
 
-        esriGDF = GeoAccessor.from_geodataframe(servicesDict[serviceName],column_name="geometry")
-        interDF = FeatureSet.from_dataframe(df=esriGDF)
-
-        layerSettings["name"] = serviceName
-        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
-        layerSettings["fields"] = interDF.fields
-        layerSettings["drawingInfo"]["renderer"] = rendererInfo
-        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]        
-
-        return layerSettings
+        return layerSettingsDict[serviceName]
 
 ### FeatureServer layer service page
 
@@ -438,37 +366,10 @@ def root(serviceName:str, f: str = "json", callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        if servicesDict[serviceName].geom_type[0] == "MultiPolygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = "Polygon"
-        elif servicesDict[serviceName].geom_type[0] == "Polygon":
-            rendererInfo = polygonRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Line":
-            rendererInfo = lineRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-        elif servicesDict[serviceName].geom_type[0] == "Point":
-            rendererInfo = pointRenderer
-            multiSanitized = servicesDict[serviceName].geom_type[0]
-
-        interDF = FeatureSet.from_dataframe(df=esriServicesDict[serviceName])
-        case = {"sqlType" : "sqlTypeOther", "nullable" : True, "editable" : False,"domain" : None,"defaultValue" : None}
-
-        for i in range(len(interDF.fields)):
-            interDF.fields[i].update(case)
-
-        layerSettings["name"] = serviceName
-        layerSettings["geometryType"] = "esriGeometry" + multiSanitized
-        layerSettings["fields"] = interDF.fields
-        layerSettings["drawingInfo"]["renderer"] = rendererInfo
-        layerSettings["extent"]["xmin"] = servicesDict[serviceName].geometry.total_bounds[0]
-        layerSettings["extent"]["ymin"] = servicesDict[serviceName].geometry.total_bounds[1]
-        layerSettings["extent"]["xmax"] = servicesDict[serviceName].geometry.total_bounds[2]
-        layerSettings["extent"]["ymax"] = servicesDict[serviceName].geometry.total_bounds[3]
         if callback is None:
-            return JSONResponse(content=layerSettings, media_type="application/json; charset=utf-8")
+            return JSONResponse(content=layerSettingsDict[serviceName], media_type="application/json; charset=utf-8")
         else:
-            return HTMLResponse(content=callback+"("+json.dumps(layerSettings)+");", media_type="application/javascript; charset=UTF-8")
+            return HTMLResponse(content=callback+"("+json.dumps(layerSettingsDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
 
 @app.get("/{serviceName}/FeatureServer/0/generateRenderer")
 def root(serviceName:str, f: str = "json", callback: str=None, classificationDef: str=None):
@@ -515,7 +416,7 @@ def root(serviceName:str, f: str = "json", callback: str=None, classificationDef
 ### lengths: [5, 5]
 
 @app.get("/{serviceName}/FeatureServer/0/query")
-def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1", maxAllowableOffset: float=None, returnCountOnly: str=None, resultOffset : int=None, resultRecordCount: int=None, outFields: str=None, callback: str=None, quantizationParameters: str=None, returnGeometry: str=None,groupByFieldsForStatistics: str=None,outStatistics: str=None):
+async def root(serviceName:str, f: str = "geojson", geometry: str="", where: str="1=1", maxAllowableOffset: float=None, returnCountOnly: str=None, resultOffset : int=None, resultRecordCount: int=None, outFields: str=None, callback: str=None, quantizationParameters: str=None, returnGeometry: str=None,groupByFieldsForStatistics: str=None,outStatistics: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
