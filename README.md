@@ -2,7 +2,7 @@
 
 A FeatureServer/MapServer implementation based on FastAPI, Geopandas and ArcGIS API for Python. The name is an homage to [KoopJS]. KoopPy tries to achieve same functionality as KoopJS (sometime ... maybe).
 
-Currently serves ```.geojson``` and ```.shp``` files inside ```./data``` and should support usage in MapViewer Classic and the new MapViewer. Styling for both FeatureServer and MapServer is implemented.
+Currently serves ```.geojson```, ```.shp```, ```.gdb``` & ```.urltext``` files inside ```./data``` and should support usage in MapViewer Classic and the new MapViewer. Styling for both FeatureServer and MapServer is implemented.
 
 **MapServer is only usable in MapViewer Classic**
 
@@ -10,6 +10,9 @@ The API serves the data using the following routes:
 1. http:<nolink>//127.0.0.1:8000/```DATANAME```/FeatureServer
 2. http:<nolink>//127.0.0.1:8000/```DATANAME```/FeatureServer/0
 3. http:<nolink>//127.0.0.1:8000/```DATANAME```/MapServer
+
+For ```.gdb``` every dataset inside the ```.gdb``` will become its own service.
+For ```.urltext``` the filename will be the service name. Simply paste a url to a dataset (e.g. geojson) into the ```.urltext``` file and KoopPy will also serve it.
 
 ## Example
 For the example file inside the data folder ```ne_110m_admin_0_countries.shp``` the routes would be:
