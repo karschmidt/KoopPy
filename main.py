@@ -194,11 +194,15 @@ def root (f: str="json"):
 ###initial service info page for FeatureServer
 
 @app.get("/{serviceName}/FeatureServer")
-def root(serviceName:str):
+def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        return servicesFSDict[serviceName]
+        if callback is None:
+          return JSONResponse(content=servicesFSDict[serviceName], media_type="application/json; charset=utf-8")
+        else:
+          return HTMLResponse(content=callback+"("+json.dumps(servicesFSDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
+
 
 ###initial service info page for MapServer
 
@@ -230,7 +234,6 @@ def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-        
         if callback is None:
           return JSONResponse(content={"layers":[layerSettingsDict[serviceName]]}, media_type="application/json; charset=utf-8")
         else:
@@ -352,12 +355,14 @@ def root(serviceName:str, callback: str=None):
 ### FeatureServer layers route - not sure if actually needed
 
 @app.get("/{serviceName}/FeatureServer/layers")
-def root(serviceName:str):
+def root(serviceName:str, callback: str=None):
     if serviceName not in servicesDict.keys():
         raise HTTPException(status_code=404, detail="Item not found")
     else:
-
-        return layerSettingsDict[serviceName]
+       if callback is None:
+            return JSONResponse(content=layerSettingsDict[serviceName], media_type="application/json; charset=utf-8")
+       else:
+            return HTMLResponse(content=callback+"("+json.dumps(layerSettingsDict[serviceName])+");", media_type="application/javascript; charset=UTF-8")
 
 ### FeatureServer layer service page
 
